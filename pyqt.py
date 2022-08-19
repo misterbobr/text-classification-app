@@ -1,5 +1,5 @@
-from PyQt6.QtCore import QSize, Qt
-from PyQt6.QtWidgets import (
+from PyQt5.QtCore import QSize, Qt
+from PyQt5.QtWidgets import (
     QApplication,
     QWidget,
     QPushButton,
@@ -12,6 +12,7 @@ from PyQt6.QtWidgets import (
     QFileDialog,
     QComboBox,
     QVBoxLayout,
+    QTabWidget
 )
 import textract
 import re
@@ -99,39 +100,52 @@ def load_data(files, categories_index=None):
 
 def model_fit(files, categories_index):
     global model, label_encoder, vectorizer
+    output = []
+    print('Extracting files data, please wait')
+    startTime = time.time()
     train_content = load_data(files, categories_index)
-    print('Files loaded successfully')
+    print(f'Data loaded successfully in {round(time.time() - startTime, 2)} seconds')
+    output.append(f'Data loaded successfully in {round(time.time() - startTime, 2)} seconds')
     x_train = vectorizer.fit_transform([data[0] for data in train_content]).toarray()
-    # x_train = vectorizer.transform([data[0] for data in train_content]).toarray()
     y_train = label_encoder.fit_transform([data[1] for data in train_content])
     print('Fitting...')
     startTime = time.time()
     model.fit(x_train, y_train)
-    print(f'Fitting completed successfully in {time.time() - startTime} seconds')
+    print(f'Fitting completed successfully in {round(time.time() - startTime, 2)} seconds')
+    output.append(f'Fitting completed successfully in {round(time.time() - startTime, 2)} seconds')
+    return '\n'.join(output)
 
 def model_predict(files):
     global model, vectorizer
+    output = []
     for i in range(len(files)):
         if file_content := load_data([files[i]]):
             x_train = vectorizer.transform(file_content).toarray()
             print(f'File: {os.path.basename(files[i])}')
+            output.append(f'File: {os.path.basename(files[i])}')
             prediction = model.predict_proba(x_train.reshape(1,-1))
             prediction = [round(proba, 2) for proba in prediction.reshape(-1,)]
             for j in range(len(prediction)):
+                output.append(f'Класс {j} - {label_encoder.classes_[j]}: {prediction[j]*100}%')
                 print(f'Класс {j} - {label_encoder.classes_[j]}: {prediction[j]*100}%')
+    return '\n'.join(output)
 
 def model_save(path, model, vectorizer, label_encoder):
-    pickle.dump(model, open(path+'/model.ml', 'wb'))
-    pickle.dump(vectorizer, open(path+'/vectorizer.vct', 'wb'))
-    pickle.dump(label_encoder, open(path+'/encoder.ml', 'wb'))
+    if (hasattr(model, "classes_")):
+        pickle.dump(model, open(path+'/model.ml', 'wb'))
+        pickle.dump(vectorizer, open(path+'/vectorizer.vct', 'wb'))
+        pickle.dump(label_encoder, open(path+'/encoder.le', 'wb'))
+    else:
+        print("No fitted model to be saved")
 
 def model_load(path):
     try:
         model = pickle.load(open(path+'/model.ml', 'rb'))
         vectorizer = pickle.load(open(path+'/vectorizer.vct', 'rb'))
+        label_encoder = pickle.load(open(path+'/encoder.le', 'rb'))
     except:
         return "An error occured. Please, select a folder where a saved model is located."
-    return model, vectorizer
+    return model, vectorizer, label_encoder
 
 model = svm.SVC(kernel='linear', probability=True, cache_size=2000)
 label_encoder = preprocessing.LabelEncoder()  # Encodes class labels to indices
@@ -146,69 +160,112 @@ class MainWindow(QMainWindow):
         super().__init__()
 
         self.setWindowTitle("App")
+
+        widget = TabsWidget()
+
+        self.setCentralWidget(widget)
+
+class TabsWidget(QWidget):
+
+    def __init__(self):
+        super(QWidget, self).__init__()
+        self.layout = QVBoxLayout()
+
+        self.tabs = QTabWidget()
+        self.tab1 = Tab1()
+        self.tab2 = Tab2()
+
+        self.tabs.addTab(self.tab1, "Fit")
+        self.tabs.addTab(self.tab2, "Predict")
+
+        self.layout.addWidget(self.tabs)
+        self.setLayout(self.layout)
+
+class Tab1(QWidget):
+
+    def __init__(self):
+        super(QWidget, self).__init__()
+
         self.layout = QVBoxLayout()
         self.filepath = QLineEdit()
-        self.submit = QPushButton("Submit")
-        self.browse = QPushButton("Browse")
+        self.browse = QPushButton("Select train data")
+        self.category_label = QLabel("Select categories to train on")
         self.category_choice = QComboBox()
         self.fit = QPushButton("Fit")
-        self.predict = QPushButton("Predict")
         self.save = QPushButton("Save")
         self.load = QPushButton("Load")
         self.output = QTextBrowser()
 
         self.browse.clicked.connect(self.browseClick)
-        # self.save.clicked.connect(self.saveClick)
+        self.fit.clicked.connect(self.fitClick)
+        self.save.clicked.connect(self.saveClick)
         self.load.clicked.connect(self.loadClick)
-        self.submit.clicked.connect(self.submitClick)
 
         self.layout.addWidget(self.filepath)
-        #self.layout.addWidget(QRadioButton())
         self.layout.addWidget(self.browse)
         self.layout.addWidget(self.category_choice)
+        self.layout.addWidget(self.fit)
+        self.layout.addWidget(self.output)
         self.layout.addWidget(self.save)
         self.layout.addWidget(self.load)
-        self.layout.addWidget(self.submit)
-        self.layout.addWidget(self.output)
-        widget = QWidget()
-        widget.setLayout(self.layout)
-
-        self.setCentralWidget(widget)
+        self.setLayout(self.layout)
 
     def browseClick(self):
         # path = QFileDialog.getOpenFileName(self, "Select Document", "", "Document Files (*.pdf)")[0]
         # self.filepath.setText(path)
         global train_files, files_root, categories
-        files_root = os.path.normpath(QFileDialog.getExistingDirectory(self, "Select Folder", directory=working_directory))
+        files_root = os.path.normpath(
+            QFileDialog.getExistingDirectory(self, "Select Folder", directory=working_directory))
         train_files, categories = load_files(files_root)
-        self.output.setText(f'Added {len(train_files)} files from {files_root}.')
+        self.output.append(f'Added {len(train_files)} files from {files_root}.\n')
         self.category_choice.clear()
         for key in categories:
             self.category_choice.addItem(f'{key}: ' + str.join(', ', [c for c in categories[key]]))
 
-    # def categoryChosen(self):
-    #     print(self.category_choice.currentText())
+    def fitClick(self):
+        self.output.append(
+            model_fit(train_files, self.category_choice.currentIndex()))
 
-    # def saveClick(self):
-        # dialog = QFileDialog(self)
-        # dialog.setFileMode(2)
-        # dialog.
-        # path = QFileDialog.getExistingDirectory(self, "Select Folder", "")
-        # self.output.setText(path)
+    def saveClick(self):
+        global model, vectorizer, label_encoder
+        dialog = QFileDialog(self)
+        dialog.setFileMode(QFileDialog.Directory)
+        path = QFileDialog.getExistingDirectory(self, "Select Folder", "")
+        model_save(path, model, vectorizer, label_encoder)
+        self.output.append(f'Successfully saved model to {path}.\n')
 
     def loadClick(self):
-        model_fit(train_files, self.category_choice.currentIndex())
-        # print(path)
-        # print(categories)
-        # print(files)
+        global model, vectorizer, label_encoder
+        dialog = QFileDialog(self)
+        dialog.setFileMode(2)
+        path = QFileDialog.getExistingDirectory(self, "Select Folder", "")
+        model, vectorizer, label_encoder = model_load(path)
+        self.output.append(f'Loaded model from {path}.\n')
 
-    def submitClick(self):
-        # self.output.setText(self.filepath.text())
-        # print(main(self.filepath.text()))
+class Tab2(QWidget):
+
+    def __init__(self):
+        super(QWidget, self).__init__()
+
+        self.layout = QVBoxLayout()
+        self.filepath = QLineEdit()
+        self.label = QLabel("Select files to make predictions for")
+        self.predict = QPushButton("Browse")
+        self.output = QTextBrowser()
+
+        self.predict.clicked.connect(self.predictClick)
+
+        self.layout.addWidget(self.filepath)
+        self.layout.addWidget(self.predict)
+        self.layout.addWidget(self.output)
+        self.setLayout(self.layout)
+
+    def predictClick(self):
+        # path = QFileDialog.getOpenFileName(self, "Select Document", "", "Document Files (*.pdf)")[0]
+        # self.filepath.setText(path)
         predict_files = QFileDialog.getOpenFileNames(self, "Select Files", directory=working_directory, filter="*.pdf")[0]
         print(predict_files)
         model_predict(predict_files)
-
 
 app = QApplication(sys.argv)
 
